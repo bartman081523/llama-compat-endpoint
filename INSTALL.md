@@ -2,6 +2,28 @@
 
 Plugin installieren, llama.cpp-Server starten, loslegen.
 
+## 0. Ein-Kommando-Setup (Linux Mint / Ubuntu)
+
+Das Skript [`setup-linux-mint.sh`](./setup-linux-mint.sh) macht Alles-auf-einmal:
+apt-Abhängigkeiten, CUDA-Sondierung, llama.cpp-**PTQ1_0-Mod-Build**
+(Standard-llama.cpp liest den Quant-Typ PTQ1_0/143 nicht!), Plugin-Installation
+und optional systemd-User-Unit für den Server:
+
+```bash
+bash setup-linux-mint.sh                  # Standard: CUDA-Auto, kein Modell-Download
+bash setup-linux-mint.sh --with-model     # zusätzlich GGUF (≈6,7 GB) von Hugging Face laden
+bash setup-linux-mint.sh --model-file /pfad/Ternary-Bonsai-2-27B-PTQ1_0.gguf   # bestehendes GGUF
+```
+
+Weitere Flags: `--cpu-only`, `--install-cuda` (CUDA-Toolkit aus NVIDIA-Repo,
+ggf. nötig wenn `nvcc` fehlt), `--no-service`, `--port`, `--threads`,
+`--skip-llama`, `--skip-plugin`. Das Skript ist idempotent — erneutes Ausführen
+aktualisiert nur. Der Server läuft danach als User-Unit:
+
+```bash
+systemctl --user status bonsai-llama
+```
+
 ## Voraussetzungen
 
 - **LM Studio** 0.4.x (getestet mit 0.4.26-4 AppImage)
