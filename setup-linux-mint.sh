@@ -151,6 +151,7 @@ else
             $SUDO dpkg -i /tmp/cuda-keyring.deb && $SUDO apt-get update -qq
             $SUDO apt-get install -y -qq cuda-toolkit-12-6   # ~4 GB Download; alternativ neuere Toolkit-Version
             export PATH="/usr/local/cuda/bin:$PATH"
+            NVCC_BIN="/usr/local/cuda/bin/nvcc"   # Pfad merken für cmake (s. u.)
             CUDA_BUILD=1
         fi
         if [[ $CUDA_BUILD -eq 0 ]]; then
@@ -203,6 +204,13 @@ build_llama() {
             build_flags+=( -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native )
         fi
         export CUDAHOSTCXX="$gxx"
+        # nvcc dem Build bekannt geben — NVIDIA-Repo-Toolkit (/usr/local/cuda/bin)
+        # liegt NICHT auf PATH; cmake findet es allein sonst nicht
+        [[ -n "$NVCC_BIN" ]] || NVCC_BIN="/usr/local/cuda/bin/nvcc"
+        [[ -x "$NVCC_BIN" ]] || die "CUDA-Build verlangt nvcc, aber '$NVCC_BIN' ist nicht ausführbar."
+        export PATH="$(dirname "$NVCC_BIN"):$PATH"
+        export CUDACXX="$NVCC_BIN"
+        build_flags+=( -DCMAKE_CUDA_COMPILER="$NVCC_BIN" )
     else
         build_flags+=( -DGGML_CUDA=OFF )
     fi
