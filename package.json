@@ -1,0 +1,20 @@
+{
+  "name": "lms-plugin-llama-compat-endpoint",
+  "version": "1.0.0",
+  "description": "OpenAI-compatible generator plugin targeting llama.cpp servers (ternary-bonsai GF3 on :9931).",
+  "main": "index.js",
+  "scripts": {
+    "dev": "lms dev",
+    "push": "lms push"
+  },
+  "author": "local",
+  "license": "ISC",
+  "dependencies": {
+    "@lmstudio/sdk": "1.4.0",
+    "openai": "^5.2.0",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.8"
+  }
+}

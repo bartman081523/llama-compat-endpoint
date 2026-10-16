@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+.lmstudio/node_modules/
+install-state.json
+src/*.bak
+
+# scratch artefacts (generiert) — nur scratches/test_payload.ts ist committet
+scratches/*.bundle.cjs
+scratches/payload_*.json
+scratches/e2e_*
+scratches/test_report.json
