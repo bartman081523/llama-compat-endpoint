@@ -18,7 +18,8 @@ bash setup-linux-mint.sh --model-file /pfad/Ternary-Bonsai-2-27B-PTQ1_0.gguf   #
 Weitere Flags: `--cpu-only`, `--install-cuda` (CUDA-Toolkit aus NVIDIA-Repo,
 ggf. nötig wenn `nvcc` fehlt), `--cuda-arch N` (Arch-Override — sonst wird die
 Compute-Capability der GPU erkannt, z. B. 3060 Ti → sm_86), `--no-service`,
-`--port`, `--threads`, `--skip-llama`, `--skip-plugin`. Das Skript ist idempotent — erneutes Ausführen
+`--quit-lmstudio` (laufendes LM Studio schließen, damit die Plugin-Modus-Keys
+gesetzt werden können), `--port`, `--threads`, `--skip-llama`, `--skip-plugin`. Das Skript ist idempotent — erneutes Ausführen
 aktualisiert nur. Der Server läuft danach als User-Unit:
 
 ```bash
@@ -73,9 +74,11 @@ Chat unter den möglichen Endpunkten (aktivierte Plugins/Generator).
 **Plugin-Modus:** Manuell abgelegte Plugins (Owner `local`) tauchen nur auf, wenn
 LM Studio Development-Plugins erlaubt — die Keys `developerMode` und
 `developer.allowDevelopmentPlugins` in `~/.lmstudio/settings.json`.
-`setup-linux-mint.sh` setzt beide automatisch (nur wenn LM Studio geschlossen ist —
-die App überschreibt die Datei beim Beenden). Läuft die App noch, in der GUI:
-**Settings → Developer → "Developer Mode" + "Allow Development Plugins" an.**
+`setup-linux-mint.sh` setzt beide automatisch: LM Studio geschlossen → Keys werden
+direkt geschrieben; läuft die App → das Skript schließt sie (nach Rückfrage, in
+Skripten mit `--quit-lmstudio`) und schreibt DANN — die App würde die Datei sonst
+beim Beenden mit ihrem In-Memory-Stand überschreiben. Wer ablehnt, macht es in der
+GUI: **Settings → Developer → "Developer Mode" + "Allow Development Plugins" an.**
 
 ## 5. llama.cpp-Server starten
 

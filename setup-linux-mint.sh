@@ -19,6 +19,7 @@
 #   bash setup-linux-mint.sh --install-cuda   CUDA-Toolkit aus NVIDIA-Repo einrichten
 #   bash setup-linux-mint.sh --no-service     systemd-User-Unit anlegen, aber nicht starten
 #   bash setup-linux-mint.sh --cuda-arch 86   CUDA-Architektur override (Default: vom GPU-Treiber erkannt)
+#   bash setup-linux-mint.sh --quit-lmstudio  laufendes LM Studio schließen, damit Plugin-Modus-Keys gesetzt werden können
 #
 # Idempotent: wiederholtes Ausführen aktualisiert/passt nur an.
 # ============================================================================
@@ -41,12 +42,13 @@ NGL=99
 CTX=131072
 THREADS="$(nproc 2>/dev/null || echo 6)"
 
-CPU_ONLY=0; WITH_MODEL=0; INSTALL_CUDA=0; NO_SERVICE=0
+CPU_ONLY=0; WITH_MODEL=0; INSTALL_CUDA=0; NO_SERVICE=0; QUIT_LMS=0
 MODEL_FILE_ARG=""; SKIP_PLUGIN=0; SKIP_LLAMA=0; CUDA_ARCH_ARG=""
 
 log()  { printf '\033[1;34m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[setup]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[setup]\033[0m %s\n' "$*" >&2; exit 1; }
+ask()  { local a=""; read -rp "[setup] $* [J/n] " a || return 1; [[ ! "$a" =~ ^[nN] ]]; }
 
 # ----------------------------------------------------------------- Argumente
 while [[ $# -gt 0 ]]; do
@@ -56,6 +58,7 @@ while [[ $# -gt 0 ]]; do
         --model-file) MODEL_FILE_ARG="${2:?}"; shift ;;
         --install-cuda) INSTALL_CUDA=1 ;;
         --no-service) NO_SERVICE=1 ;;
+        --quit-lmstudio) QUIT_LMS=1 ;;
         --cuda-arch) CUDA_ARCH_ARG="${2:?}"; shift ;;
         --skip-plugin) SKIP_PLUGIN=1 ;;
         --skip-llama) SKIP_LLAMA=1 ;;
@@ -284,7 +287,8 @@ install_plugin() {
 # Manuell abgelegte Plugins (owner "local") tauchen nur unter "Integrations"
 # auf, wenn LM Studio Development-Plugins erlaubt: developerMode = true +
 # developer.allowDevelopmentPlugins = true (Settings → Developer).
-# LM Studio offen? Dann NICHT schreiben — die App überschreibt settings.json.
+# LM Studio offen? Wird geschlossen (Rückfrage / --quit-lmstudio), DANN geschrieben —
+# die App überschreibt settings.json sonst beim Beenden mit ihrem In-Memory-Stand.
 enable_plugin_mode() {
     local cfg="$HOME/.lmstudio/settings.json"
     if [[ ! -f "$cfg" ]]; then
@@ -292,10 +296,29 @@ enable_plugin_mode() {
         warn "→ Nach dem ersten LM-Studio-Start: Settings → Developer → 'Developer Mode' + 'Allow Development Plugins' on"
         return 0
     fi
-    if pgrep -f "lm-studio" >/dev/null 2>&1; then
-        warn "LM Studio läuft gerade — settings.json wird von der App verwaltet, kein Auto-Write."
-        warn "→ In der GUI: Settings → Developer → 'Developer Mode' + 'Allow Development Plugins' an"
-        return 0
+    if pgrep -f "[l]m-studio" >/dev/null 2>&1; then
+        # [l]-Muster: pgrep matcht den eigenen Warteloop nicht mit
+        if [[ "${QUIT_LMS:-0}" -ne 1 ]]; then
+            if [[ ! -t 0 ]]; then
+                warn "LM Studio läuft — ohne --quit-lmstudio und ohne TTY: kein Auto-Quit."
+                warn "→ In der GUI: Settings → Developer → 'Developer Mode' + 'Allow Development Plugins' an"
+                return 0
+            fi
+            ask "LM Studio läuft — schließen und Plugin-Modus setzen?" \
+                || { warn "Übersprungen — manuell in der GUI: Settings → Developer → 'Developer Mode' + 'Allow Development Plugins' an"; return 0; }
+            log "Schließe LM Studio (SIGTERM) ..."
+        else
+            log "Schließe LM Studio (--quit-lmstudio, SIGTERM) ..."
+        fi
+        pkill -TERM -f "[l]m-studio" 2>/dev/null || true
+        # Begrenzt warten, bis die App weg ist (self-terminierend, max. 15 s)
+        timeout 15 bash -c 'while pgrep -f "[l]m-studio" >/dev/null 2>&1; do sleep 0.5; done' || true
+        if pgrep -f "[l]m-studio" >/dev/null 2>&1; then
+            warn "LM Studio wurde nach 15 s nicht beendet — Keys nicht gesetzt."
+            warn "→ LM Studio schließen und Skript erneut laufen lassen — oder GUI: Settings → Developer"
+            return 0
+        fi
+        log "LM Studio beendet — setze Keys."
     fi
     local out
     out="$(python3 - "$cfg" <<'PYCFG'
