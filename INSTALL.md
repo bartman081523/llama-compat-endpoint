@@ -16,8 +16,9 @@ bash setup-linux-mint.sh --model-file /pfad/Ternary-Bonsai-2-27B-PTQ1_0.gguf   #
 ```
 
 Weitere Flags: `--cpu-only`, `--install-cuda` (CUDA-Toolkit aus NVIDIA-Repo,
-ggf. nötig wenn `nvcc` fehlt), `--no-service`, `--port`, `--threads`,
-`--skip-llama`, `--skip-plugin`. Das Skript ist idempotent — erneutes Ausführen
+ggf. nötig wenn `nvcc` fehlt), `--cuda-arch N` (Arch-Override — sonst wird die
+Compute-Capability der GPU erkannt, z. B. 3060 Ti → sm_86), `--no-service`,
+`--port`, `--threads`, `--skip-llama`, `--skip-plugin`. Das Skript ist idempotent — erneutes Ausführen
 aktualisiert nur. Der Server läuft danach als User-Unit:
 
 ```bash

@@ -18,6 +18,7 @@
 #   bash setup-linux-mint.sh --model-file P   bestehendes GGUF verwenden (kein Download)
 #   bash setup-linux-mint.sh --install-cuda   CUDA-Toolkit aus NVIDIA-Repo einrichten
 #   bash setup-linux-mint.sh --no-service     systemd-User-Unit anlegen, aber nicht starten
+#   bash setup-linux-mint.sh --cuda-arch 86   CUDA-Architektur override (Default: vom GPU-Treiber erkannt)
 #
 # Idempotent: wiederholtes Ausführen aktualisiert/passt nur an.
 # ============================================================================
@@ -41,7 +42,7 @@ CTX=131072
 THREADS="$(nproc 2>/dev/null || echo 6)"
 
 CPU_ONLY=0; WITH_MODEL=0; INSTALL_CUDA=0; NO_SERVICE=0
-MODEL_FILE_ARG=""; SKIP_PLUGIN=0; SKIP_LLAMA=0
+MODEL_FILE_ARG=""; SKIP_PLUGIN=0; SKIP_LLAMA=0; CUDA_ARCH_ARG=""
 
 log()  { printf '\033[1;34m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[setup]\033[0m %s\n' "$*" >&2; }
@@ -55,11 +56,12 @@ while [[ $# -gt 0 ]]; do
         --model-file) MODEL_FILE_ARG="${2:?}"; shift ;;
         --install-cuda) INSTALL_CUDA=1 ;;
         --no-service) NO_SERVICE=1 ;;
+        --cuda-arch) CUDA_ARCH_ARG="${2:?}"; shift ;;
         --skip-plugin) SKIP_PLUGIN=1 ;;
         --skip-llama) SKIP_LLAMA=1 ;;
         --port) PORT="${2:?}"; shift ;;
         --threads) THREADS="${2:?}"; shift ;;
-        -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) awk 'NR<=2 {next} /^# ====/ {exit} {sub(/^# ?/,""); print}' "$0"; exit 0 ;;
         *) die "Unbekannte Option: $1 (siehe --help)" ;;
     esac
     shift
@@ -112,12 +114,14 @@ nvcc_major() {
     "$1" -V 2>/dev/null | sed -n 's/.*release \([0-9]*\)\..*/\1/p' | head -1
 }
 
-CUDA_BUILD=0; NVCC_BIN=""
+CUDA_BUILD=0; NVCC_BIN=""; GPU_CC=""
 if [[ $CPU_ONLY -eq 1 ]]; then
     log "CPU-Build erzwungen (--cpu-only)"
 else
     if command -v nvidia-smi >/dev/null 2>&1; then
         log "NVIDIA-Treiber aktiv: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+        # Compute Capability der GPU (z. B. 8.6 → 86) für die CUDA-Architektur-Wahl
+        GPU_CC="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' .')"
         NVCC_BIN="$(command -v nvcc || true)"
         if [[ -z "$NVCC_BIN" ]]; then
             for d in /usr/local/cuda*/bin; do [[ -x "$d/nvcc" ]] && NVCC_BIN="$d/nvcc" && break; done
@@ -176,11 +180,11 @@ build_llama() {
     log "llama.cpp HEAD: $(git -C "$LLAMA_SRC" log --oneline -1)"
 
     local build_flags=( -B "$LLAMA_SRC/build" -DCMAKE_BUILD_TYPE=Release
-                        -DGGML_CUDA=OFF -DLLAMA_BUILD_TESTS=OFF
+                        -DLLAMA_BUILD_TESTS=OFF
                         -DLLAMA_BUILD_SERVER=ON -DBUILD_SHARED_LIBS=ON
                         -DLLAMA_CURL=OFF )
     if [[ $CUDA_BUILD -eq 1 ]]; then
-        # GPU-Offload: sm_75 (Turing, RTX 20xx) — erprobt mit nvcc 13.x + CUDAHOSTCXX=g++-14
+        # GPU-Offload (GGML_CUDA=ON): erprobt mit nvcc 12.6/13.x + CUDAHOSTCXX=g++-13/14
         local gxx=""
         for gxx in g++-14 g++-13 g++-12; do command -v "$gxx" >/dev/null 2>&1 && break; gxx=""; done
         if [[ -z "$gxx" ]]; then
@@ -188,12 +192,21 @@ build_llama() {
             gxx="g++-13"
         fi
         command -v "$gxx" >/dev/null 2>&1 || die "CUDAHOSTCXX-Kandidat $gxx nicht gefunden."
-        log "CUDA-Build: -DGGML_CUDA=ON, Arch sm_75, CUDAHOSTCXX=${gxx}"
-        build_flags=( -B "$LLAMA_SRC/build" -DCMAKE_BUILD_TYPE=Release
-            -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 -DLLAMA_BUILD_TESTS=OFF
-            -DLLAMA_BUILD_SERVER=ON -DBUILD_SHARED_LIBS=ON -DLLAMA_CURL=OFF )
+        # CUDA-Architektur: Override > GPU-Erkennung (compute_cap, z. B. 3060 Ti → 86) > CMake-"native"
+        local cuda_arch="${CUDA_ARCH_ARG}"
+        if [[ -z "$cuda_arch" && -n "$GPU_CC" ]]; then cuda_arch="$GPU_CC"; fi
+        if [[ -n "$cuda_arch" ]]; then
+            log "CUDA-Build: -DGGML_CUDA=ON, Arch sm_${cuda_arch}, CUDAHOSTCXX=${gxx}"
+            build_flags+=( -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$cuda_arch" )
+        else
+            log "CUDA-Build: -DGGML_CUDA=ON, Arch=native (CMake-Erkennung), CUDAHOSTCXX=${gxx}"
+            build_flags+=( -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native )
+        fi
         export CUDAHOSTCXX="$gxx"
+    else
+        build_flags+=( -DGGML_CUDA=OFF )
     fi
+    mkdir -p "$LLAMA_SRC/build"   # Redirect-Ziel existiert VOR cmake-Anlauf
     log "cmake konfigurieren (Log: $LLAMA_SRC/build/configure.log) ..."
     cmake "${build_flags[@]}" "$LLAMA_SRC" > "$LLAMA_SRC/build/configure.log" 2>&1 \
         || die "cmake configure fehlgeschlagen — Log: $LLAMA_SRC/build/configure.log"
