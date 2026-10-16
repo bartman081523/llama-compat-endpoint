@@ -70,6 +70,13 @@ ls "$DEST"
 Den Plugin-Discovery-Scan macht LM Studio beim Boot. Danach erscheint das Plugin im
 Chat unter den möglichen Endpunkten (aktivierte Plugins/Generator).
 
+**Plugin-Modus:** Manuell abgelegte Plugins (Owner `local`) tauchen nur auf, wenn
+LM Studio Development-Plugins erlaubt — die Keys `developerMode` und
+`developer.allowDevelopmentPlugins` in `~/.lmstudio/settings.json`.
+`setup-linux-mint.sh` setzt beide automatisch (nur wenn LM Studio geschlossen ist —
+die App überschreibt die Datei beim Beenden). Läuft die App noch, in der GUI:
+**Settings → Developer → "Developer Mode" + "Allow Development Plugins" an.**
+
 ## 5. llama.cpp-Server starten
 
 ```bash

@@ -9,3 +9,5 @@ scratches/*.bundle.cjs
 scratches/payload_*.json
 scratches/e2e_*
 scratches/test_report.json
+# enthält settings.json-Kopien (privat) — nicht committen
+scratches/plugin-mode-test/

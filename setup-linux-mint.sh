@@ -280,7 +280,48 @@ install_plugin() {
     log "Plugin installiert — Discovery beim nächsten LM-Studio-Boot."
 }
 
+# ------------------------------------------- Plugin-Modus in LM-Studio-Settings
+# Manuell abgelegte Plugins (owner "local") tauchen nur unter "Integrations"
+# auf, wenn LM Studio Development-Plugins erlaubt: developerMode = true +
+# developer.allowDevelopmentPlugins = true (Settings → Developer).
+# LM Studio offen? Dann NICHT schreiben — die App überschreibt settings.json.
+enable_plugin_mode() {
+    local cfg="$HOME/.lmstudio/settings.json"
+    if [[ ! -f "$cfg" ]]; then
+        warn "$cfg nicht gefunden (LM Studio noch nie gestartet?)."
+        warn "→ Nach dem ersten LM-Studio-Start: Settings → Developer → 'Developer Mode' + 'Allow Development Plugins' on"
+        return 0
+    fi
+    if pgrep -f "lm-studio" >/dev/null 2>&1; then
+        warn "LM Studio läuft gerade — settings.json wird von der App verwaltet, kein Auto-Write."
+        warn "→ In der GUI: Settings → Developer → 'Developer Mode' + 'Allow Development Plugins' an"
+        return 0
+    fi
+    local out
+    out="$(python3 - "$cfg" <<'PYCFG'
+import json, sys
+p = sys.argv[1]
+with open(p) as f:
+    cfg = json.load(f)
+dev = cfg.setdefault("developer", {})
+changed = []
+if not dev.get("allowDevelopmentPlugins"):
+    dev["allowDevelopmentPlugins"] = True
+    changed.append("developer.allowDevelopmentPlugins")
+if not cfg.get("developerMode"):
+    cfg["developerMode"] = True
+    changed.append("developerMode")
+if changed:
+    with open(p, "w") as f:
+        json.dump(cfg, f, indent=2)
+print("SET " + (" ".join(changed) if changed else "none"))
+PYCFG
+)" || { warn "settings.json konnte nicht geparst/geschrieben werden — Plugin-Modus manuell in der GUI aktivieren (Settings → Developer)."; return 0; }
+    log "Plugin-Modus aktiv (developerMode + allowDevelopmentPlugins) — Integrations beim Boot (SET: ${out#SET })."
+}
+
 [[ $SKIP_PLUGIN -eq 1 ]] || install_plugin
+[[ $SKIP_PLUGIN -eq 1 ]] || enable_plugin_mode
 download_model
 
 # --------------------------------------------------- Stufe 6: systemd user-Unit
