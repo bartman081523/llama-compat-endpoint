@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake systemctl: loggt Aufrufe, exit 0.
+printf 'systemctl %s\n' "$*" >> "${FAKE_SYSTEMCTL_LOG:-/dev/null}"
+exit 0

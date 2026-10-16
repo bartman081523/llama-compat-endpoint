@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake curl: -sf-Health-Anfragen erfolgreich, sobald FAKE_HEALTH_STATE existiert.
+[[ -f "${FAKE_HEALTH_STATE:-}" ]] && exit 0
+exit 1

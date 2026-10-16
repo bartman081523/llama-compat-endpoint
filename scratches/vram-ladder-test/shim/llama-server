@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Fake llama-server für VRAM-Ladder-Tests (scratches/vram-ladder-test).
+# Zählt Aufrufe via FAKE_LADDER_STATE; scheitert bis FAKE_FAIL_RUNGS inklusive,
+# danach: schreibt FAKE_HEALTH_STATE und bleibt "am Laufen" (exec sleep, killbar).
+S="$FAKE_LADDER_STATE"
+R="$(cat "$S" 2>/dev/null || echo 0)"; R=$((R+1)); echo "$R" > "$S"
+if [[ "$R" -le "${FAKE_FAIL_RUNGS:-0}" ]]; then
+    echo "llama_model_load_cb: failed to load model: ggml_backend_cuda_buffer: out of memory"
+    exit 1
+fi
+printf 'up\n' > "$FAKE_HEALTH_STATE"
+echo "server is listening on http://127.0.0.1:9931"
+exec sleep 600

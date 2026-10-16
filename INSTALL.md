@@ -19,8 +19,17 @@ Weitere Flags: `--cpu-only`, `--install-cuda` (CUDA-Toolkit aus NVIDIA-Repo,
 ggf. nötig wenn `nvcc` fehlt), `--cuda-arch N` (Arch-Override — sonst wird die
 Compute-Capability der GPU erkannt, z. B. 3060 Ti → sm_86), `--no-service`,
 `--quit-lmstudio` (laufendes LM Studio schließen, damit die Plugin-Modus-Keys
-gesetzt werden können), `--port`, `--threads`, `--skip-llama`, `--skip-plugin`. Das Skript ist idempotent — erneutes Ausführen
-aktualisiert nur. Der Server läuft danach als User-Unit:
+gesetzt werden können), `--port`, `--threads`, `--skip-llama`, `--skip-plugin`.
+Das Skript ist idempotent — erneutes Ausführen aktualisiert nur.
+
+**VRAM-Ladder:** Bei GPU-Build testet das Skript die Server-Konfiguration von der
+vollen Referenz (`-ngl 99 -c 131072 -ctk/-ctv q8_0`) abwärts — erst kleinere
+Kontexte, dann quantisierter KV-Cache (`q4_0` + `-fa`), zuletzt Teils-Offload —
+bis llama-server wirklich auf `/health` antwortet. Die erste laufende
+Konfiguration landet in der systemd-Unit. Diagnose-Log der zuletzt probierten
+Stufe: `~/src/llama.cpp-bonsai/build/probe.log`.
+
+Der Server läuft danach als User-Unit:
 
 ```bash
 systemctl --user status bonsai-llama
@@ -110,3 +119,4 @@ antwortet nur, wenn ein Modell geladen ist.)
 | HTTP 400 `reasoning effort` | Wert muss xhigh/medium/low sein (Template-Validierung) |
 | HTTP 400 `grammar` + tools | GBNF-Feld leeren oder Tools deaktivieren (beides zusammen verweigert llama.cpp) |
 | Generierung bricht sofort ab | Stop-Sequenz mit Einzelzeichen — realistische Multi-Char-Stops verwenden |
+| Server-Start schlägt fehl | Ladder-Diagnose: `~/src/llama.cpp-bonsai/build/probe.log` (letzte probierte Stufe) |

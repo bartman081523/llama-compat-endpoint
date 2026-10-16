@@ -347,19 +347,96 @@ PYCFG
 [[ $SKIP_PLUGIN -eq 1 ]] || enable_plugin_mode
 download_model
 
+# ---------------- VRAM-Ladder: volle Konfiguration zuerst, abwärts bis Start
+# Probiert llama-server-Konfigurationen von voller VRAM-Belegung abwärts, bis
+# eine tatsächlich startet (/health antwortet) — die Gewinner-Config landet in
+# der systemd-Unit. Kontext-Reduktion ist hier explizit gewünscht (User) und
+# kein stiller Cap im Lauf: die volle Referenz wird zuerst versucht.
+PROBE_TIMEOUT=150
+VRAM_LADDER=(
+    "99 131072 q8_0 q8_0"      # volle Konfiguration (Referenz, dev-Box-proven)
+    "99  65536 q8_0 q8_0"      # halber Kontext
+    "99  24576 q8_0 q8_0"      # chat-tauglicher Kontext
+    "99   8192 q8_0 q8_0"
+    "99   8192 q4_0 q4_0 -fa"  # KV quantisiert; -fa ist Voraussetzung für KV-Quantisierung
+    "40   8192 q8_0 q8_0"      # Teils-Offload (Gewichte auf CPU, langsames Dekodieren)
+    "20   8192 q8_0 q8_0"      # noch mehr Last auf die CPU
+)
+
+# try_config NGL CTX CTK CTV [EXTRA-FLAGS...] — startet llama-server probe-weise
+# und wartet begrenzt auf /health. Tod des Prozesses beendet den Wartelauf sofort
+# (Zombie-Erkennung, weil der bg-Child erst nach dem wait verschwindet).
+try_config() {
+    local ngl="$1" ctx="$2" ctk="$3" ctv="$4"; shift 4
+    local extra=("$@") pid rc why
+    log "VRAM-Probe: -ngl $ngl -c $ctx -ctk $ctk -ctv $ctv${extra[*]:+ ${extra[*]}}"
+    "$LLAMA_SRC/build/bin/llama-server" -m "$MODEL_PATH" \
+        -ngl "$ngl" -c "$ctx" -np 1 -ctk "$ctk" -ctv "$ctv" \
+        ${extra[@]+"${extra[@]}"} \
+        --port "$PORT" --host 127.0.0.1 --threads "$THREADS" \
+        > "$LLAMA_SRC/build/probe.log" 2>&1 &
+    pid=$!
+    rc=0
+    timeout "$PROBE_TIMEOUT" bash -c "
+        until curl -sf 'http://127.0.0.1:${PORT}/health' >/dev/null 2>&1; do
+            if ! kill -0 ${pid} 2>/dev/null; then exit 3; fi
+            ps -o stat= -p ${pid} 2>/dev/null | grep -q '^Z' && exit 3
+            sleep 2
+        done" || rc=$?
+    if [[ "${rc:-124}" -eq 0 ]]; then
+        kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+        WIN_NGL="$ngl"; WIN_CTX="$ctx"; WIN_CTK="$ctk"; WIN_CTV="$ctv"; WIN_EXTRA="${extra[*]:-}"
+        log "  → läuft — Config übernommen."
+        return 0
+    fi
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    why="$(grep -m1 -iE 'out of memory|error|failed' "$LLAMA_SRC/build/probe.log" 2>/dev/null | cut -c1-160 || true)"
+    warn "  → startet nicht (${rc:-124})${why:+: $why}"
+    return 1
+}
+
 # --------------------------------------------------- Stufe 6: systemd user-Unit
 make_unit() {
-    if [[ -z "${MODEL_PATH:-}" || $SKIP_LLAMA -eq 1 || $NO_SERVICE -eq 1 ]]; then
-        warn "Kein systemd-Unit (Modell fehlt oder --no-service) — Start von Hand:"
+    if [[ $NO_SERVICE -eq 1 ]]; then
+        warn "Kein systemd-Unit (--no-service) — Start von Hand:"
         warn "  $LLAMA_SRC/build/bin/llama-server -m </pfad/gguf> -ngl $NGL -c $CTX -np 1 -ctk q8_0 -ctv q8_0 --port $PORT --host 127.0.0.1 --threads $THREADS"
         return 0
     fi
+    if [[ ! -x "$LLAMA_SRC/build/bin/llama-server" ]]; then
+        warn "llama-server nicht gefunden — kein Unit (erst bauen: --skip-llama weglassen)."
+        return 0
+    fi
+    if [[ -z "${MODEL_PATH:-}" ]]; then
+        warn "Kein Modell (--with-model/--model-file) — kein Unit, Start von Hand wie oben."
+        return 0
+    fi
+    mkdir -p "$LLAMA_SRC/build"
+    # Rerun-Fall: alten Unit-Server stoppen, sonst kollidiert die Probe mit dem Port
+    systemctl --user stop "${SERVICE_NAME}" 2>/dev/null || true
+    if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+        die "Port ${PORT} bereits belegt (fremder llama-server?) — erst beenden, dann erneut laufen lassen."
+    fi
+    # Referenz-Defaults; die Ladder überschreibt sie mit der ersten laufenden Config
+    WIN_NGL="$NGL"; WIN_CTX="$CTX"; WIN_CTK="q8_0"; WIN_CTV="q8_0"; WIN_EXTRA=""
+    if [[ $CUDA_BUILD -eq 1 && $CPU_ONLY -eq 0 ]]; then
+        log "VRAM-Ladder: ${#VRAM_LADDER[@]} Konfigurationen, je max. ${PROBE_TIMEOUT}s (volle zuerst)."
+        local found=0 rung
+        for rung in "${VRAM_LADDER[@]}"; do
+            # Rung-String wird bewusst in Argumente gesplittert:
+            # shellcheck disable=SC2086
+            if try_config $rung; then found=1; break; fi
+        done
+        [[ $found -eq 1 ]] || die "Keine VRAM-Konfiguration gestartet — letzte Diagnose: $LLAMA_SRC/build/probe.log"
+    else
+        log "CPU-Build — keine VRAM-Ladder, Unit mit Referenz-Flags."
+    fi
+    log "Gewinner-Config: -ngl ${WIN_NGL} -c ${WIN_CTX} -ctk ${WIN_CTK} -ctv ${WIN_CTV}${WIN_EXTRA:+ ${WIN_EXTRA}}"
     mkdir -p "$HOME/.config/systemd/user"
     cat > "$HOME/.config/systemd/user/${SERVICE_NAME}.service" <<UNIT
 [Unit]
 Description=Bonsai llama.cpp server (PTQ1_0) fuer LM Studio llama-compat-endpoint
 [Service]
-ExecStart=${LLAMA_SRC}/build/bin/llama-server -m ${MODEL_PATH} -ngl ${NGL} -c ${CTX} -np 1 -ctk q8_0 -ctv q8_0 --port ${PORT} --host 127.0.0.1 --threads ${THREADS}
+ExecStart=${LLAMA_SRC}/build/bin/llama-server -m ${MODEL_PATH} -ngl ${WIN_NGL} -c ${WIN_CTX} -np 1 -ctk ${WIN_CTK} -ctv ${WIN_CTV} ${WIN_EXTRA} --port ${PORT} --host 127.0.0.1 --threads ${THREADS}
 Restart=on-failure
 RestartSec=5
 [Install]
